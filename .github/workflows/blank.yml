@@ -1,27 +1,82 @@
-#!/bin/bash
+name: Multi-Language CI - Test, Report & Summary
 
-# غيّر USERNAME باسم حسابك في GitHub
-USERNAME="nawahtkui"
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
-REPORT="repos_status_report.txt"
-echo "تقرير جاهزية المستودعات - $(date)" > $REPORT
-echo "-------------------------------------" >> $REPORT
+jobs:
+  detect-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-gh repo list $USERNAME --limit 100 --json name,url | jq -r '.[] | "\(.name) \(.url)"' | while read repo url; do
-    echo "جارٍ فحص: $repo ..."
-    TEMP_DIR=$(mktemp -d)
-    git clone --depth 1 "$url" "$TEMP_DIR" > /dev/null 2>&1
+      # --- Node.js ---
+      - name: Setup Node.js if package.json exists
+        if: ${{ exists('package.json') }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
 
-    STATUS="❌ غير جاهز"
-    if [ -f "$TEMP_DIR/index.html" ] || [ -d "$TEMP_DIR/src" ]; then
-        STATUS="⚠ يحتاج تعديل"
-    fi
-    if [ -f "$TEMP_DIR/index.html" ] && [ -d "$TEMP_DIR/src" ]; then
-        STATUS="✅ جاهز للنشر"
-    fi
+      - name: Install Node.js dependencies
+        if: ${{ exists('package.json') }}
+        run: npm install
 
-    echo "$repo - $STATUS" >> $REPORT
-    rm -rf "$TEMP_DIR"
-done
+      - name: Run Node.js Lint
+        if: ${{ exists('package.json') }}
+        run: npm run lint || true
 
-echo "تم إنشاء التقرير في $REPORT"
+      - name: Run Node.js Tests
+        if: ${{ exists('package.json') }}
+        run: |
+          mkdir -p reports
+          npm test -- --json --outputFile=reports/test-results.json
+          npx jest-html-reporter --input reports/test-results.json --output reports/test-results.html || true
+          # Print summary
+          node -e "const r=require('./reports/test-results.json');console.log(`Node.js Tests: Total=${r.numTotalTests}, Passed=${r.numPassedTests}, Failed=${r.numFailedTests}`);"
+
+      # --- Python ---
+      - name: Setup Python if requirements.txt exists
+        if: ${{ exists('requirements.txt') }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+
+      - name: Install Python dependencies
+        if: ${{ exists('requirements.txt') }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-json-report pytest-html
+
+      - name: Run Python Tests
+        if: ${{ exists('requirements.txt') }}
+        run: |
+          mkdir -p reports
+          pytest --json-report --json-report-file=reports/test-results.json --html=reports/test-results.html
+          # Print summary
+          python - <<EOF
+import json
+r = json.load(open('reports/test-results.json'))
+print(f"Python Tests: Total={r['summary']['total']}, Passed={r['summary']['passed']}, Failed={r['summary']['failed']}")
+EOF
+
+      # --- Solidity ---
+      - name: Run Solidity Tests if hardhat.config.js exists
+        if: ${{ exists('hardhat.config.js') }}
+        run: |
+          mkdir -p reports
+          npx hardhat test --reporter json > reports/test-results.json
+          npx hardhat test --reporter mocha > reports/test-results.html || true
+          # Print summary (approximate)
+          node -e "const fs=require('fs'); const r=JSON.parse(fs.readFileSync('reports/test-results.json')); console.log(`Solidity Tests: Total=${r.stats.tests}, Passed=${r.stats.passes}, Failed=${r.stats.failures}`);"
+
+      # --- Upload Reports ---
+      - name: Upload Test Reports
+        if: ${{ exists('reports/test-results.json') || exists('reports/test-results.html') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: reports/
