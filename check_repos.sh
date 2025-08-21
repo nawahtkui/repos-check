@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # غيّر USERNAME باسم حسابك في GitHub
-USERNAME="YOUR_USERNAME"
+USERNAME="nawahtkui"
 
 REPORT="repos_status_report.txt"
 echo "تقرير جاهزية المستودعات - $(date)" > $REPORT
