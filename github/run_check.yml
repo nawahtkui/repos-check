@@ -1,0 +1,32 @@
+name: Check Repositories
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check-repos:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up GitHub CLI
+        uses: actions/setup-gh-cli@v2
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq git
+
+      - name: Run repo check script
+        run: bash check_repos.sh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload report
+        uses: actions/upload-artifact@v3
+        with:
+          name: repos-report
+          path: repos_status_report.txt
