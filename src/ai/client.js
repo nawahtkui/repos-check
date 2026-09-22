@@ -1,3 +1,5 @@
+import { buildReviewPrompt } from "./prompt-builder.js";
+
 function buildMockReview(result) {
   const findings = result.findings || [];
   const summary = result.summary || {};
@@ -136,6 +138,117 @@ function buildMockReview(result) {
   };
 }
 
+async function requestOpenRouter(prompt) {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  const model =
+    process.env.OPENROUTER_MODEL || "openai/gpt-5";
+
+  if (!apiKey) {
+    throw new Error(
+      "OPENROUTER_API_KEY is required when AI_PROVIDER=openrouter."
+    );
+  }
+
+  const response = await fetch(
+    "https://openrouter.ai/api/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        ...(process.env.AI_SITE_URL
+          ? { "HTTP-Referer": process.env.AI_SITE_URL }
+          : {}),
+        ...(process.env.AI_SITE_NAME
+          ? { "X-OpenRouter-Title": process.env.AI_SITE_NAME }
+          : {})
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a precise software repository reviewer. Return only valid JSON."
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ]
+      })
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      `OpenRouter API error ${response.status}: ${
+        data?.error?.message || JSON.stringify(data)
+      }`
+    );
+  }
+
+  const content = data?.choices?.[0]?.message?.content;
+
+  if (!content) {
+    throw new Error(
+      "OpenRouter returned an empty response."
+    );
+  }
+
+  return content;
+}
+
+async function requestOpenAI(prompt) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  const model =
+    process.env.OPENAI_MODEL || "gpt-5";
+
+  if (!apiKey) {
+    throw new Error(
+      "OPENAI_API_KEY is required when AI_PROVIDER=openai."
+    );
+  }
+
+  const response = await fetch(
+    "https://api.openai.com/v1/responses",
+    {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model,
+        input: prompt
+      })
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      `OpenAI API error ${response.status}: ${
+        data?.error?.message || JSON.stringify(data)
+      }`
+    );
+  }
+
+  const content = data?.output_text;
+
+  if (!content) {
+    throw new Error(
+      "OpenAI returned an empty response."
+    );
+  }
+
+  return content;
+}
+
 export async function askAI({ provider, result }) {
   if (!provider || provider === "mock") {
     return {
@@ -148,7 +261,24 @@ export async function askAI({ provider, result }) {
     };
   }
 
+  const prompt = buildReviewPrompt(result);
+
+  if (provider === "openrouter") {
+    return {
+      provider: "openrouter",
+      content: await requestOpenRouter(prompt)
+    };
+  }
+
+  if (provider === "openai") {
+    return {
+      provider: "openai",
+      content: await requestOpenAI(prompt)
+    };
+  }
+
   throw new Error(
-    `AI provider "${provider}" is not implemented yet.`
+    `AI provider "${provider}" is not implemented yet. ` +
+    `Supported providers: mock, openrouter, openai.`
   );
 }
