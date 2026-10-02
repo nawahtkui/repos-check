@@ -8,6 +8,7 @@ import { analyzeStructure } from "./src/analyzers/structure.js";
 import { analyzeBuild } from "./src/analyzers/build.js";
 import { analyzeDependencies } from "./src/analyzers/dependencies.js";
 import { analyzeSecurity } from "./src/analyzers/security.js";
+import { analyzeRepositoryAudit } from "./src/analyzers/repository-audit.js";
 import { normalizeFindings } from "./src/core/findings.js";
 import { reviewWithAI } from "./src/ai/reviewer.js";
 import { downloadGitHubRepository } from "./src/github/repository.js";
@@ -63,6 +64,7 @@ function printFindings(findings) {
     );
 
     console.log(`  Category: ${finding.category}`);
+    console.log(`  Confidence: ${finding.confidence}`);
     console.log(`  Path: ${finding.path}`);
 
     if (finding.evidence) {
@@ -326,7 +328,8 @@ async function analyzeRepository(
       policy
     ),
     ...analyzeDependencies(absoluteRoot),
-    ...analyzeSecurity(absoluteRoot)
+    ...analyzeSecurity(absoluteRoot),
+    ...analyzeRepositoryAudit(absoluteRoot)
   ];
 
   const findings =
