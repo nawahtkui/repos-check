@@ -10,6 +10,7 @@ import { analyzeDependencies } from "./src/analyzers/dependencies.js";
 import { analyzeSecurity } from "./src/analyzers/security.js";
 import { normalizeFindings } from "./src/core/findings.js";
 import { reviewWithAI } from "./src/ai/reviewer.js";
+import { downloadGitHubRepository } from "./src/github/repository.js";
 
 function printUsage() {
   console.log(`
@@ -17,16 +18,22 @@ Repos Check — AI Repository Review Bot
 
 Usage:
 
-  node app.js repo .
-  node app.js review .
-  npm run review:repo -- /path/to/project
-  npm run review:all
+  Local repository:
+    node app.js repo .
+    npm run review:repo -- /path/to/project
+
+  GitHub repository:
+    npm run review:github -- owner/repository
+
+Examples:
+    npm run review:github -- nawahtkui/repos-check
+    npm run review:github -- facebook/react
 
 Commands:
-
-  repo <path>     Review one repository
-  review <path>   Review one repository
-  all             Review repositories configured for batch analysis
+  repo <path>              Review local repository
+  review <path>            Review local repository
+  github <owner/repo>      Review GitHub repository
+  all                      Reserved for batch review
 `);
 }
 
@@ -59,7 +66,9 @@ function printFindings(findings) {
     console.log(`  Path: ${finding.path}`);
 
     if (finding.evidence) {
-      console.log(`  Evidence: ${finding.evidence.slice(0, 300)}`);
+      console.log(
+        `  Evidence: ${finding.evidence.slice(0, 300)}`
+      );
     }
 
     if (finding.recommendation) {
@@ -72,143 +81,7 @@ function printFindings(findings) {
   }
 }
 
-async function reviewRepository(root) {
-  const absoluteRoot = path.resolve(root);
-
-  if (!fs.existsSync(absoluteRoot)) {
-    throw new Error(`Repository path does not exist: ${absoluteRoot}`);
-  }
-
-  console.log("========================================");
-  console.log(" REPOS CHECK — REPOSITORY REVIEW");
-  console.log("========================================");
-  console.log(`Repository: ${absoluteRoot}`);
-  console.log();
-
-  const project = detectProject(absoluteRoot);
-  const policy = getReviewPolicy(project);
-
-  console.log("PROJECT");
-  console.log(`Languages: ${project.languages.join(", ") || "None"}`);
-  console.log(`Frameworks: ${project.frameworks.join(", ") || "None"}`);
-  console.log(
-    `Type: ${project.projectType.join(", ") || "Unknown"}`
-  );
-  console.log(
-    `Package managers: ${
-      project.packageManagers.join(", ") || "None"
-    }`
-  );
-  console.log(
-    `GitHub Actions: ${project.hasGitHubActions ? "Yes" : "No"}`
-  );
-  console.log(
-    `Docker: ${project.hasDocker ? "Yes" : "No"}`
-  );
-  console.log(
-    `README: ${project.hasReadme ? "Yes" : "No"}`
-  );
-  console.log(
-    `.env.example: ${project.hasEnvExample ? "Yes" : "No"}`
-  );
-
-  console.log();
-  console.log("REVIEW POLICY");
-  console.log(
-    `Build required: ${policy.requireBuild ? "Yes" : "No"}`
-  );
-  console.log(
-    `Tests required: ${policy.requireTests ? "Yes" : "No"}`
-  );
-  console.log(
-    `Lint required: ${policy.requireLint ? "Yes" : "No"}`
-  );
-  console.log(
-    `Execution allowed: ${policy.executionAllowed ? "Yes" : "No"}`
-  );
-
-  if (policy.notes.length > 0) {
-    console.log("Policy notes:");
-
-    for (const note of policy.notes) {
-      console.log(`- ${note}`);
-    }
-  }
-
-  console.log();
-  console.log("Running analyzers...");
-
-  const rawFindings = [
-    ...analyzeStructure(absoluteRoot),
-    ...analyzeBuild(
-      absoluteRoot,
-      project,
-      policy
-    ),
-    ...analyzeDependencies(absoluteRoot),
-    ...analyzeSecurity(absoluteRoot)
-  ];
-
-  const findings = normalizeFindings(rawFindings);
-  const summary = buildSummary(findings);
-
-  const result = {
-    tool: "repos-check",
-    version: "1.0.0",
-    generatedAt: new Date().toISOString(),
-    repository: absoluteRoot,
-    project,
-    policy,
-    summary,
-    findings
-  };
-
-  fs.mkdirSync(path.join(absoluteRoot, "reports"), {
-    recursive: true
-  });
-
-  const reportPath = path.join(
-    absoluteRoot,
-    "reports",
-    "review.json"
-  );
-
-  fs.writeFileSync(
-    reportPath,
-    JSON.stringify(result, null, 2)
-  );
-
-  console.log();
-  console.log("===== SUMMARY =====");
-  console.log(`Total findings: ${summary.total}`);
-  console.log(`Critical: ${summary.critical}`);
-  console.log(`High: ${summary.high}`);
-  console.log(`Medium: ${summary.medium}`);
-  console.log(`Low: ${summary.low}`);
-  console.log(`Info: ${summary.info}`);
-
-  printFindings(findings);
-
-  console.log(`JSON report: ${reportPath}`);
-
-  console.log();
-  console.log("Running AI reviewer...");
-
-  const ai = await reviewWithAI(result);
-
-  result.ai = ai;
-
-  fs.writeFileSync(
-    reportPath,
-    JSON.stringify(result, null, 2)
-  );
-
-  const aiReportPath = path.join(
-    absoluteRoot,
-    "reports",
-    "ai-review.md"
-  );
-
+function renderMarkdown(ai) {
   const review = ai.review || {};
 
   const markdown = [
@@ -242,7 +115,10 @@ async function reviewRepository(root) {
       );
     }
   } else {
-    markdown.push("No main issues detected.", "");
+    markdown.push(
+      "No main issues detected.",
+      ""
+    );
   }
 
   markdown.push(
@@ -275,9 +151,13 @@ async function reviewRepository(root) {
   );
 
   if (review.buildAndDependencies?.recommendations?.length) {
-    for (const recommendation of review.buildAndDependencies.recommendations) {
+    for (
+      const recommendation of
+      review.buildAndDependencies.recommendations
+    ) {
       markdown.push(`- ${recommendation}`);
     }
+
     markdown.push("");
   }
 
@@ -291,9 +171,15 @@ async function reviewRepository(root) {
   );
 
   if (review.productionReadiness?.blockers?.length) {
-    markdown.push("### Blockers", "");
+    markdown.push(
+      "### Blockers",
+      ""
+    );
 
-    for (const blocker of review.productionReadiness.blockers) {
+    for (
+      const blocker of
+      review.productionReadiness.blockers
+    ) {
       markdown.push(`- ${blocker}`);
     }
 
@@ -317,7 +203,10 @@ async function reviewRepository(root) {
       );
     }
   } else {
-    markdown.push("No corrective actions were generated.", "");
+    markdown.push(
+      "No corrective actions were generated.",
+      ""
+    );
   }
 
   markdown.push(
@@ -330,34 +219,399 @@ async function reviewRepository(root) {
       markdown.push(`- ${step}`);
     }
   } else {
-    markdown.push("No additional steps provided.");
+    markdown.push(
+      "No additional steps provided."
+    );
   }
 
   markdown.push("");
 
-  fs.writeFileSync(
-    aiReportPath,
-    markdown.join("\n")
-  );
-
-  console.log(`AI provider: ${ai.provider}`);
-  console.log(`AI report: ${aiReportPath}`);
-
-  return result;
+  return markdown.join("\n");
 }
 
-const command = process.argv[2];
+async function analyzeRepository(
+  root,
+  options = {}
+) {
+  const absoluteRoot = path.resolve(root);
+
+  if (!fs.existsSync(absoluteRoot)) {
+    throw new Error(
+      `Repository path does not exist: ${absoluteRoot}`
+    );
+  }
+
+  const project = detectProject(absoluteRoot);
+
+  const policy = {
+    ...getReviewPolicy(project),
+    ...(options.policyOverrides || {})
+  };
+
+  console.log("PROJECT");
+  console.log(
+    `Languages: ${project.languages.join(", ") || "None"}`
+  );
+  console.log(
+    `Frameworks: ${project.frameworks.join(", ") || "None"}`
+  );
+  console.log(
+    `Type: ${project.projectType.join(", ") || "Unknown"}`
+  );
+  console.log(
+    `Package managers: ${
+      project.packageManagers.join(", ") || "None"
+    }`
+  );
+  console.log(
+    `GitHub Actions: ${
+      project.hasGitHubActions ? "Yes" : "No"
+    }`
+  );
+  console.log(
+    `Docker: ${
+      project.hasDocker ? "Yes" : "No"
+    }`
+  );
+  console.log(
+    `README: ${
+      project.hasReadme ? "Yes" : "No"
+    }`
+  );
+  console.log(
+    `.env.example: ${
+      project.hasEnvExample ? "Yes" : "No"
+    }`
+  );
+
+  console.log();
+  console.log("REVIEW POLICY");
+  console.log(
+    `Build required: ${
+      policy.requireBuild ? "Yes" : "No"
+    }`
+  );
+  console.log(
+    `Tests required: ${
+      policy.requireTests ? "Yes" : "No"
+    }`
+  );
+  console.log(
+    `Lint required: ${
+      policy.requireLint ? "Yes" : "No"
+    }`
+  );
+  console.log(
+    `Execution allowed: ${
+      policy.executionAllowed ? "Yes" : "No"
+    }`
+  );
+
+  if (policy.notes.length) {
+    console.log("Policy notes:");
+
+    for (const note of policy.notes) {
+      console.log(`- ${note}`);
+    }
+  }
+
+  console.log();
+  console.log("Running analyzers...");
+
+  const rawFindings = [
+    ...analyzeStructure(absoluteRoot),
+    ...analyzeBuild(
+      absoluteRoot,
+      project,
+      policy
+    ),
+    ...analyzeDependencies(absoluteRoot),
+    ...analyzeSecurity(absoluteRoot)
+  ];
+
+  const findings =
+    normalizeFindings(rawFindings);
+
+  const summary =
+    buildSummary(findings);
+
+  return {
+    tool: "repos-check",
+    version: "1.0.0",
+    generatedAt:
+      new Date().toISOString(),
+    repository:
+      options.repositoryLabel ||
+      absoluteRoot,
+    project,
+    policy,
+    summary,
+    findings
+  };
+}
+
+function writeReports(
+  result,
+  ai,
+  reportPrefix = "review"
+) {
+  const reportDir =
+    path.resolve("reports");
+
+  fs.mkdirSync(
+    reportDir,
+    { recursive: true }
+  );
+
+  result.ai = ai;
+
+  const jsonPath =
+    path.join(
+      reportDir,
+      `${reportPrefix}.json`
+    );
+
+  const markdownPath =
+    path.join(
+      reportDir,
+      `${reportPrefix}.md`
+    );
+
+  fs.writeFileSync(
+    jsonPath,
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  fs.writeFileSync(
+    markdownPath,
+    renderMarkdown(ai)
+  );
+
+  return {
+    jsonPath,
+    markdownPath
+  };
+}
+
+async function reviewLocal(root) {
+  console.log(
+    "========================================"
+  );
+  console.log(
+    " REPOS CHECK — LOCAL REPOSITORY REVIEW"
+  );
+  console.log(
+    "========================================"
+  );
+
+  const result =
+    await analyzeRepository(root);
+
+  console.log();
+  console.log("===== SUMMARY =====");
+  console.log(
+    `Total findings: ${result.summary.total}`
+  );
+  console.log(
+    `Critical: ${result.summary.critical}`
+  );
+  console.log(
+    `High: ${result.summary.high}`
+  );
+  console.log(
+    `Medium: ${result.summary.medium}`
+  );
+  console.log(
+    `Low: ${result.summary.low}`
+  );
+  console.log(
+    `Info: ${result.summary.info}`
+  );
+
+  printFindings(result.findings);
+
+  console.log();
+  console.log("Running AI reviewer...");
+
+  const ai =
+    await reviewWithAI(result);
+
+  const reports =
+    writeReports(
+      result,
+      ai,
+      "review"
+    );
+
+  console.log(
+    `AI provider: ${ai.provider}`
+  );
+  console.log(
+    `JSON report: ${reports.jsonPath}`
+  );
+  console.log(
+    `Markdown report: ${reports.markdownPath}`
+  );
+}
+
+async function reviewGitHub(input) {
+  console.log(
+    "========================================"
+  );
+  console.log(
+    " REPOS CHECK — GITHUB REPOSITORY REVIEW"
+  );
+  console.log(
+    "========================================"
+  );
+
+  console.log(
+    `GitHub repository: ${input}`
+  );
+  console.log();
+
+  const remote =
+    await downloadGitHubRepository(
+      input
+    );
+
+  try {
+    console.log(
+      `Branch: ${remote.branch}`
+    );
+    console.log(
+      `Files downloaded: ${remote.downloadedFiles}`
+    );
+    console.log(
+      `Large files skipped: ${remote.skippedLargeFiles}`
+    );
+    console.log();
+
+    const result =
+      await analyzeRepository(
+        remote.root,
+        {
+          repositoryLabel:
+            `${remote.owner}/${remote.repo}@${remote.branch}`,
+          policyOverrides: {
+            executionAllowed: false
+          }
+        }
+      );
+
+    result.source = {
+      type: "github",
+      owner: remote.owner,
+      repo: remote.repo,
+      branch: remote.branch,
+      sha: remote.sha,
+      url: remote.url,
+      totalFiles:
+        remote.totalFiles,
+      priorityFiles:
+        remote.priorityFiles,
+      downloadedFiles:
+        remote.downloadedFiles,
+      skippedLargeFiles:
+        remote.skippedLargeFiles,
+      downloadedPaths:
+        remote.downloadedPaths
+    };
+
+    console.log();
+    console.log("===== SUMMARY =====");
+    console.log(
+      `Total findings: ${result.summary.total}`
+    );
+    console.log(
+      `Critical: ${result.summary.critical}`
+    );
+    console.log(
+      `High: ${result.summary.high}`
+    );
+    console.log(
+      `Medium: ${result.summary.medium}`
+    );
+    console.log(
+      `Low: ${result.summary.low}`
+    );
+    console.log(
+      `Info: ${result.summary.info}`
+    );
+
+    printFindings(result.findings);
+
+    console.log();
+    console.log(
+      "Running AI reviewer..."
+    );
+
+    const ai =
+      await reviewWithAI(result);
+
+    const safeName =
+      `${remote.owner}-${remote.repo}`
+        .replace(/[^a-zA-Z0-9._-]/g, "-");
+
+    const reports =
+      writeReports(
+        result,
+        ai,
+        `github-${safeName}`
+      );
+
+    console.log();
+    console.log(
+      `AI provider: ${ai.provider}`
+    );
+    console.log(
+      `JSON report: ${reports.jsonPath}`
+    );
+    console.log(
+      `Markdown report: ${reports.markdownPath}`
+    );
+  } finally {
+    remote.cleanup();
+  }
+}
+
+const command =
+  process.argv[2];
 
 try {
-  if (command === "repo" || command === "review") {
-    await reviewRepository(process.argv[3] || ".");
-  } else if (command === "all") {
-    console.log("Batch repository review is not implemented yet.");
-    console.log("Use: npm run review:repo -- .");
+  if (
+    command === "repo" ||
+    command === "review"
+  ) {
+    await reviewLocal(
+      process.argv[3] || "."
+    );
+  } else if (
+    command === "github"
+  ) {
+    await reviewGitHub(
+      process.argv[3]
+    );
+  } else if (
+    command === "all"
+  ) {
+    console.log(
+      "Batch repository review is not implemented yet."
+    );
+    console.log(
+      "Use: npm run review:github -- owner/repository"
+    );
   } else {
     printUsage();
   }
 } catch (error) {
-  console.error(`ERROR: ${error.message}`);
+  console.error(
+    `ERROR: ${error.message}`
+  );
+
   process.exit(1);
 }

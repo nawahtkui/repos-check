@@ -8,7 +8,9 @@
     "start": "node app.js",
     "review": "node app.js review",
     "review:repo": "node app.js repo",
-    "review:all": "node app.js all"
+    "review:all": "node app.js all",
+    "review:github": "node app.js github",
+    "review:local": "node app.js repo"
   },
   "engines": {
     "node": ">=20"

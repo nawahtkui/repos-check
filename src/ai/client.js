@@ -155,13 +155,7 @@ async function requestOpenRouter(prompt) {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        ...(process.env.AI_SITE_URL
-          ? { "HTTP-Referer": process.env.AI_SITE_URL }
-          : {}),
-        ...(process.env.AI_SITE_NAME
-          ? { "X-OpenRouter-Title": process.env.AI_SITE_NAME }
-          : {})
+        "Content-Type": "application/json"
       },
       body: JSON.stringify({
         model,
